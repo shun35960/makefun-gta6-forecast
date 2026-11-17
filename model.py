@@ -26,6 +26,13 @@ DEFAULT = {
     "min_points": 20,     # donor needs this many release-day hours (of 24)
     "cls_pen": 1.0,       # weight multiplier for a donor whose unlock type differs (CV: no gain, kept off)
     "spread_slope": 0.0,  # extra quantile stretch per hour beyond hour 2 (CV: no gain, kept off)
+    # Round-2 candidates (all off by default = v1 behaviour exactly).
+    "size_pivot": 10.6,   # ln hour-1 below which a target counts as small (ln 40k)
+    "shrink_small": 1.1,  # round 2: shrink at/below ln v1 = size_pivot - 2, blended linearly up to size_pivot (CV: small -0.063)
+    "bw_size_small": None,  # size kernel width used for a small target
+    "bw_ch": None,        # kernel width on ln hour-1 channels
+    "bw_vpc": None,       # kernel width on ln(hour-1 viewers per channel)
+    "cap_small": None,    # cap (log units) on any predicted log-ratio quantile for a small target
 }
 
 
@@ -70,8 +77,16 @@ def unlock_class(text: str) -> int:
     return 1 if ("simultaneous" in t or "single global" in t or "single time" in t) else 0
 
 
+def _ch0(rows, day_start: float):
+    for r in rows:
+        if abs(_ts(r["from"]) - day_start) < 1.0:
+            c = r.get("channels")
+            return float(c) if c else None
+    return None
+
+
 def donors_from_case(case: dict, min_points: int):
-    """Each usable comparable: (features, {h: r_h})."""
+    """Each usable comparable: (features, {h: r_h}, unlock class, hour-1 channels or None)."""
     out = []
     for cm in case.get("comparables") or []:
         try:
@@ -86,7 +101,7 @@ def donors_from_case(case: dict, min_points: int):
             continue
         v1 = hm[0]
         r = {h + 1: math.log(hm[h] / v1) for h in day}  # contest hour = offset + 1
-        out.append((_features(hm, v1), r, unlock_class(cm.get("unlock", ""))))
+        out.append((_features(hm, v1), r, unlock_class(cm.get("unlock", "")), _ch0(cm.get("hourly") or [], d0)))
     return out
 
 
@@ -114,7 +129,9 @@ def forecast_logratios(case: dict, p: dict | None = None):
     if p:
         k.update(p)
     d0 = _ts(case["day_start"])
-    v1 = max(1.0, float(next(r for r in case["known"] if r["hour"] == 1)["viewers"]))
+    k1 = next(r for r in case["known"] if r["hour"] == 1)
+    v1 = max(1.0, float(k1["viewers"]))
+    ch1 = float(k1["channels"]) if k1.get("channels") else None
     hm = _hour_map(case.get("history_hourly") or [], d0)
     hm[0] = v1
     tf = _features(hm, v1)
@@ -122,9 +139,21 @@ def forecast_logratios(case: dict, p: dict | None = None):
     if not donors:
         return None
     tcls = unlock_class(case.get("notes", "") if isinstance(case.get("notes"), str) else json_dumps(case.get("notes")))
+    lv = tf[0]
+    small = lv < k["size_pivot"]
+    bws = k["bw_size_small"] if (small and k["bw_size_small"]) else k["bw_size"]
+    shrink = k["shrink"]
+    if k["shrink_small"] is not None and small:
+        a = min(1.0, (k["size_pivot"] - lv) / 2.0)
+        shrink = (1 - a) * k["shrink"] + a * k["shrink_small"]
     ws = []
-    for f, _, dcls in donors:
-        z = ((f[0] - tf[0]) / k["bw_size"]) ** 2 + ((f[1] - tf[1]) / k["bw_mom"]) ** 2 + ((f[2] - tf[2]) / k["bw_lvl"]) ** 2
+    for f, _, dcls, dch in donors:
+        z = ((f[0] - tf[0]) / bws) ** 2 + ((f[1] - tf[1]) / k["bw_mom"]) ** 2 + ((f[2] - tf[2]) / k["bw_lvl"]) ** 2
+        if ch1 and dch:
+            if k["bw_ch"]:
+                z += (math.log(dch / ch1) / k["bw_ch"]) ** 2
+            if k["bw_vpc"]:
+                z += ((math.log(math.exp(f[0]) / dch) - math.log(v1 / ch1)) / k["bw_vpc"]) ** 2
         ws.append(math.exp(-0.5 * z) * (k["cls_pen"] if dcls != tcls else 1.0))
     m = max(ws)
     ws = [max(w / m, k["w_floor"]) for w in ws]
@@ -132,9 +161,9 @@ def forecast_logratios(case: dict, p: dict | None = None):
     for row in case["forecast"]:
         h = row["hour"]
         pts, pw = [], []
-        for (f, r, _), w in zip(donors, ws):
+        for (f, r, _, _), w in zip(donors, ws):
             if h in r:
-                pts.append(k["shrink"] * r[h])
+                pts.append(shrink * r[h])
                 pw.append(w)
         if not pts or sum(pw) <= 0:
             out[h] = None
@@ -144,5 +173,7 @@ def forecast_logratios(case: dict, p: dict | None = None):
         med = qs[2]
         sp = k["spread"] * (1.0 + k["spread_slope"] * (h - 2))
         qs = [med + sp * (q - med) for q in qs]
+        if k["cap_small"] is not None and small:
+            qs = [min(q, k["cap_small"]) for q in qs]
         out[h] = qs
     return out
