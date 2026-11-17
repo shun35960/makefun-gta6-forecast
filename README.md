@@ -1,3 +1,7 @@
 # gta6-twitch-ccu-forecast-01 entry
 
+[![make.fun · gta6-twitch-ccu-forecast-01](https://make.fun/badge/gta6-twitch-ccu-forecast-01.svg)](https://make.fun/bounty/gta6-twitch-ccu-forecast-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-twitch-ccu-forecast-01)
+[![rank](https://make.fun/badge/gta6-twitch-ccu-forecast-01/shun35960/makefun-gta6-forecast/rank.svg)](https://make.fun/bounty/gta6-twitch-ccu-forecast-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-twitch-ccu-forecast-01)
+[![reward](https://make.fun/badge/gta6-twitch-ccu-forecast-01/shun35960/makefun-gta6-forecast/reward.svg)](https://make.fun/bounty/gta6-twitch-ccu-forecast-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-twitch-ccu-forecast-01)
+
 An entry for the make.fun bounty **gta6-twitch-ccu-forecast-01**: it forecasts five quantiles of each hour's Twitch viewers (hours 2–24 of GTA VI's release day) as an analog ensemble over the case's comparable launches. Each donor's release-day log-ratio curve ln(v_h / v_1) is weighted by its similarity to the target (hour-1 size, and hour 1 relative to the previous hour and the previous 24 h). The weighted curves are combined as a Gaussian-kernel mixture, shrunk slightly toward persistence, and applied to hour 1's print. The program uses Python 3.13 with the standard library only and falls back to the house persistence forecast if the model fails. Run it with `MAKEFUN_INPUT_DIR=input MAKEFUN_OUTPUT_DIR=out python3 main.py`.
